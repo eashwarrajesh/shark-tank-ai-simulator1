@@ -1,9 +1,84 @@
+﻿# Dependencies
 **/node_modules
+**/npm-debug.log
+**/yarn-error.log
+**/package-lock.json
+**/yarn.lock
+
+# Environment & Config
 **/.env
+**/.env.local
+**/.env.*.local
+
+# Build outputs
 **/dist
+**/build
+**/.next
+**/out
+
+# Git
 **/.git
 **/.gitignore
+**/.gitattributes
+
+# Documentation
 **/README.md
+**/CHANGELOG.md
+**/*.md
+!server/README.md
+
+# Testing
+**/test
+**/tests
+**/__tests__
+**/*.test.js
+**/*.spec.js
+**/coverage
+**/.nyc_output
+
+# IDE & Editor
+**/.vscode
+**/.idea
+**/*.swp
+**/*.swo
+**/*~
+**/.DS_Store
+
+# Logs
 **/*.log
+**/logs
+
+# Misc
+**/.dockerignore
+**/Dockerfile*
+**/docker-compose*.yml
+**/.editorconfig
+**/.eslintrc*
+**/.prettierrc*
+**/tsconfig.json
+
+# Client specific (keep source, exclude dev artifacts)
 client/public
-.dockerignore
+client/src/assets/*.png
+client/src/assets/*.jpg
+
+# Server specific
+server/.env.example
+server/tests
+server/**/*.backup
+
+# CI/CD
+**/.github
+**/.gitlab-ci.yml
+**/.travis.yml
+
+# Kiro/Agent files
+**/.kiro
+**/.agents
+
+# Template documentation (not needed in production)
+PITCH_TEMPLATE.md
+TEMPLATE_USAGE.md
+QUICK_START.md
+CHEAT_SHEET.md
+FAST_DEMO.md

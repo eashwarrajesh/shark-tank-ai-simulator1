@@ -1,0 +1,22 @@
+﻿version: '3.8'
+
+services:
+  shark-tank-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shark-tank-ai
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - AI_MODE=mock
+      - AI_TIMEOUT_MS=2000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

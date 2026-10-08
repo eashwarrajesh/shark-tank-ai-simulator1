@@ -1,0 +1,305 @@
+/**
+ * aiService.js
+ * Production AI service using Hugging Face Llama-3.1-8B-Instruct
+ */
+
+const { callMockAI } = require('./mockAIClient');
+
+console.log('?? AI Mode: MOCK MODE (Demo/Hackathon Ready)');
+
+// --- Shared rules -------------------------------------------------------------
+const SHARK_RULES = `You are an investor on a startup panel. Be tough but fair.
+Rules:
+- Ask only ONE question at a time.
+- Keep each question under 25 words.
+- Attack the weakest part of the pitch, not a random part.
+- If the founder gives a vague answer, push back and ask for a number, a name, or an example.
+- Never give advice during the grilling. Only ask.
+- Do not be rude. Be sharp, not cruel.`;
+
+// --- Investor personas --------------------------------------------------------
+const INVESTORS = {
+  money: {
+    name: 'Victor Cash',
+    emoji: '??',
+    title: 'The Money Shark',
+    focus: 'REVENUE • COSTS • PROFIT',
+    color: '#f59e0b',
+    bg: 'rgba(245,158,11,0.08)',
+    border: 'rgba(245,158,11,0.25)',
+    systemPrompt: `${SHARK_RULES}
+
+Your name is Victor Cash. You care only about money.
+You ask about: how the startup earns, what it costs to run, the price, and how soon it makes profit.
+If the founder says "we will figure out money later", say that worries you.
+Your style: calm, quick, loves numbers.`,
+  },
+  market: {
+    name: 'Maya Street',
+    emoji: '??',
+    title: 'The Customer Shark',
+    focus: 'CUSTOMERS • SWITCHING • ACQUISITION',
+    color: '#3b82f6',
+    bg: 'rgba(59,130,246,0.08)',
+    border: 'rgba(59,130,246,0.25)',
+    systemPrompt: `${SHARK_RULES}
+
+Your name is Maya Street. You care only about real customers.
+You ask about: who exactly will pay, why they would switch from what they use now, and how the first 10 customers will be found.
+If the founder says "everyone will use it", ask them to name one real person.
+Your style: friendly voice, but very direct.`,
+  },
+  product: {
+    name: 'Rex Doubt',
+    emoji: '??',
+    title: 'The Doubter Shark',
+    focus: 'RISK • COMPETITION • TEAM',
+    color: '#8b5cf6',
+    bg: 'rgba(139,92,246,0.08)',
+    border: 'rgba(139,92,246,0.25)',
+    systemPrompt: `${SHARK_RULES}
+
+Your name is Rex Doubt. You care about what can go wrong.
+You ask about: big companies copying the idea, legal problems, and why this team is the right one.
+Your style: dry humor, hard to impress.`,
+  },
+};
+
+const INVESTOR_ORDER = ['money', 'market', 'product'];
+
+// --- Generate opening question ------------------------------------------------
+const generateInvestorQuestion = async (investorKey, pitchData) => {
+  const investor = INVESTORS[investorKey];
+  const parsed = await callMockAI([
+    { role: 'system', content: investor.systemPrompt },
+    { role: 'user', content: `The founder is pitching this startup:
+- Name: ${pitchData.startupName}
+- Pitch: ${pitchData.oneLiner}
+- Problem: ${pitchData.problem}
+- Solution: ${pitchData.solution}
+- Target Customer: ${pitchData.targetCustomer}
+- Business Model: ${pitchData.businessModel}
+- Competitive Advantage: ${pitchData.competitiveAdvantage || 'Not stated'}
+
+Ask ONE question. Under 25 words. Attack the weakest part from YOUR angle.
+Make it specific to THIS startup — not generic.
+
+Respond ONLY with valid JSON (no markdown, no extra text):
+{
+  "question": "your single sharp question here",
+  "context": "one sentence — what weakness does this expose"
+}` },
+  ], 300, 0.8);
+  
+  if (!parsed.question) throw new Error('Missing question field in AI response');
+  return parsed;
+};
+
+// --- Evaluate a founder's answer ----------------------------------------------
+const evaluateAnswer = async (investorKey, pitchData, question, answer) => {
+  const investor = INVESTORS[investorKey];
+  const parsed = await callMockAI([
+    { role: 'system', content: investor.systemPrompt },
+    { role: 'user', content: `Startup: ${pitchData.startupName} — "${pitchData.oneLiner}"
+
+Your question was: "${question}"
+The founder answered: "${answer}"
+
+Score this answer 0–100:
+- 0–40: Vague, evasive, no specifics
+- 41–60: Partial — missing numbers or names
+- 61–75: Decent but gaps remain
+- 76–90: Strong, specific, convincing
+- 91–100: Exceptional (rare)
+
+Do NOT reward vague answers with high scores.
+
+Respond ONLY with valid JSON (no markdown, no extra text):
+{
+  "score": <0-100>,
+  "reaction": "<1-2 sentences in character — sharp, honest, under 30 words>",
+  "strength": "<what they got right, one sentence>",
+  "weakness": "<what was missing — be specific, one sentence>",
+  "followUpQuestion": "<one sharp follow-up under 20 words>"
+}` },
+  ], 400, 0.7);
+  
+  if (typeof parsed.score !== 'number') throw new Error('Missing score in AI response');
+  return parsed;
+};
+
+// --- Deal Meter ---------------------------------------------------------------
+const getDealMeterDelta = async (investorKey, question, answer) => {
+  const investor = INVESTORS[investorKey];
+  const parsed = await callMockAI([
+    { role: 'system', content: investor.systemPrompt },
+    { role: 'user', content: `Question asked: "${question}"
+Founder's answer: "${answer}"
+
+Did this answer make the investors more or less interested?
+Respond ONLY with valid JSON (no markdown): { "delta": <integer from -10 to 10> }` },
+  ], 50, 0.3);
+  
+  const delta = parseInt(parsed.delta, 10);
+  if (isNaN(delta)) throw new Error('Invalid delta in AI response');
+  return Math.max(-10, Math.min(10, delta));
+};
+
+// --- Final Judge verdict ------------------------------------------------------
+const generateFinalVerdict = async (pitchData, rounds) => {
+  const conversation = rounds.map((r, i) => {
+    const inv = INVESTORS[r.investorKey] || {};
+    return [
+      `--- Round ${i + 1}: ${inv.name || r.investorKey} (${inv.focus || ''}) ---`,
+      `QUESTION: "${r.question}"`,
+      `FOUNDER ANSWER: "${r.answer}"`,
+      `PER-ROUND SCORE: ${r.score}/100`,
+      `STRENGTH NOTED: ${r.strength || 'not recorded'}`,
+      `WEAKNESS NOTED: ${r.weakness || 'not recorded'}`,
+    ].join('\n');
+  }).join('\n\n');
+
+  const weakestRound = rounds.reduce((w, r) => (!w || r.score < w.score) ? r : w, null);
+  const weakestInvestor = weakestRound ? (INVESTORS[weakestRound.investorKey]?.name || weakestRound.investorKey) : '';
+  const weakestRoundNum = weakestRound ? rounds.indexOf(weakestRound) + 1 : 1;
+
+  const judgeSystem = `You are a fair, evidence-based judge evaluating a startup pitch session.
+
+CRITICAL RULES — follow exactly:
+
+1. WEAKEST ANSWER:
+   - Copy the founder's answer from the round with the LOWEST per-round score.
+   - Do not paraphrase. Copy it exactly as written.
+
+2. STRONGER VERSION:
+   - Write an improved version of that SAME answer, to that SAME question.
+   - The improved answer MUST directly address the original investor question.
+   - Preserve valid points from the founder's original answer.
+   - Add specificity where the original was vague (numbers, named examples, proposed experiments).
+   - Do NOT introduce facts, team experience, competitors, revenue, or traction
+     that were not mentioned in the original answer.
+   - Frame missing evidence as proposed experiments, not existing achievements.
+
+3. SCORING (money, customer, risk — each 1–10):
+   - Base every score ONLY on what the founder actually said.
+   - Consider: completeness, specificity, evidence, business reasoning.
+   - Penalise vague or assumption-heavy answers.
+   - Most pitches score 4–7. Scores of 8–10 require exceptional evidence.
+
+4. FIXES:
+   - Each fix must address a specific weakness from one of the three rounds.
+   - Make fixes specific to this startup — no generic advice.
+
+5. DEAL: deal=true only if money, customer, AND risk are ALL 6 or above.
+
+Return ONLY this JSON — no markdown, no extra text:
+{
+  "score": <1-10>,
+  "money": <1-10>,
+  "customer": <1-10>,
+  "risk": <1-10>,
+  "weakest_question": "<exact question the weakest answer was responding to>",
+  "weakest_answer": "<founder weakest answer, copied exactly>",
+  "weakness_reason": "<one sentence: what specific information was missing>",
+  "better_version": "<improved answer to that SAME question — no invented facts>",
+  "fixes": [
+    "<fix 1: tied to a weakness from the session>",
+    "<fix 2: tied to a weakness from the session>",
+    "<fix 3: tied to a weakness from the session>"
+  ],
+  "deal": <true or false>,
+  "offer": "<if deal true: short offer e.g. Victor Cash offers ?5L for 15%; if false: empty string>"
+}`;
+
+  const judgeUser = `STARTUP: ${pitchData.startupName}
+PITCH: "${pitchData.oneLiner}"
+PROBLEM: ${pitchData.problem}
+SOLUTION: ${pitchData.solution}
+TARGET CUSTOMER: ${pitchData.targetCustomer}
+BUSINESS MODEL: ${pitchData.businessModel}
+COMPETITIVE ADVANTAGE: ${pitchData.competitiveAdvantage || 'Not stated'}
+
+INVESTOR SESSION TRANSCRIPT:
+${conversation}
+
+NOTE: Round ${weakestRoundNum} (${weakestInvestor}) had the LOWEST score.
+Copy that answer as "weakest_answer".
+The "better_version" MUST answer this question: "${weakestRound?.question || ''}"`;
+
+  const parsed = await callMockAI([
+    { role: 'system', content: judgeSystem },
+    { role: 'user', content: judgeUser },
+  ], 1000, 0.4);
+
+  if (typeof parsed.score !== 'number') throw new Error('Missing score in verdict');
+
+  const overallScore = Math.round(Math.max(1, Math.min(10, parsed.score)) * 10);
+  const verdict = parsed.deal ? 'INVEST' : overallScore >= 60 ? 'INTERESTED' : 'PASS';
+  const toPercent = (n) => Math.round(Math.max(0, Math.min(10, n || 5)) * 10);
+
+  return {
+    score: parsed.score,
+    money: parsed.money,
+    customer: parsed.customer,
+    risk: parsed.risk,
+    weakest_question: parsed.weakest_question || weakestRound?.question || '',
+    weakest_answer: parsed.weakest_answer || weakestRound?.answer || '',
+    weakness_reason: parsed.weakness_reason || '',
+    better_version: parsed.better_version || '',
+    fixes: Array.isArray(parsed.fixes) ? parsed.fixes.slice(0, 3) : [],
+    deal: !!parsed.deal,
+    offer: parsed.offer || '',
+    overallScore,
+    verdict,
+    investorVerdicts: {
+      money:   { verdict: (parsed.money    || 5) >= 7 ? 'Invest' : (parsed.money    || 5) >= 5 ? 'Interested' : 'Pass', reason: `${INVESTORS.money.name}: ${parsed.money}/10`    },
+      market:  { verdict: (parsed.customer || 5) >= 7 ? 'Invest' : (parsed.customer || 5) >= 5 ? 'Interested' : 'Pass', reason: `${INVESTORS.market.name}: ${parsed.customer}/10` },
+      product: { verdict: (parsed.risk     || 5) >= 7 ? 'Invest' : (parsed.risk     || 5) >= 5 ? 'Interested' : 'Pass', reason: `${INVESTORS.product.name}: ${parsed.risk}/10`    },
+    },
+    scorecard: {
+      problemClarity:  toPercent((parsed.customer + parsed.money) / 2),
+      marketPotential: toPercent(parsed.customer),
+      businessModel:   toPercent(parsed.money),
+      differentiation: toPercent(parsed.risk),
+      productStrength: toPercent((parsed.risk + parsed.money) / 2),
+      scalability:     toPercent(parsed.money),
+      founderResponse: overallScore,
+    },
+    hardestTruth: parsed.weakness_reason || `Your weakest moment: "${(parsed.weakest_answer || '').slice(0, 120)}"`,
+    whyInvestorsMightSayYes: parsed.deal
+      ? [`${INVESTORS.money.name} sees a viable business model`, `${INVESTORS.market.name} believes in the customer demand`, `${INVESTORS.product.name} thinks the product is defensible`]
+      : [],
+    rescuePlan:        parsed.fixes || [],
+    strengthsSummary:  parsed.deal && parsed.offer ? parsed.offer : '',
+    weaknessesSummary: parsed.better_version ? `Stronger version: ${parsed.better_version}` : '',
+  };
+};
+
+// --- Hint ---------------------------------------------------------------------
+const generateHint = async (investorKey, pitchData, question) => {
+  const investor = INVESTORS[investorKey];
+  const parsed = await callMockAI([
+    { role: 'system', content: investor.systemPrompt },
+    { role: 'user', content: `The investor asked: "${question}"
+Startup: ${pitchData.startupName} — ${pitchData.oneLiner}
+
+Give a helpful hint that guides the founder on HOW to think.
+Do NOT give the answer. Point toward what kind of fact, number, or name would make a strong answer.
+2 sentences max.
+
+Respond ONLY with valid JSON (no markdown): { "hint": "<your guiding hint>" }` },
+  ], 120, 0.5);
+  
+  if (!parsed.hint) throw new Error('Missing hint in AI response');
+  return parsed;
+};
+
+module.exports = {
+  INVESTORS,
+  INVESTOR_ORDER,
+  generateInvestorQuestion,
+  evaluateAnswer,
+  getDealMeterDelta,
+  generateFinalVerdict,
+  generateHint,
+};

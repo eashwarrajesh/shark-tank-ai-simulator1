@@ -1,0 +1,193 @@
+/**
+ * mockAIClient.js
+ * Smart mock AI responses - works in development AND production
+ * Perfect for demos and hackathons!
+ */
+
+// Realistic question bank per investor type
+const QUESTIONS = {
+  money: [
+    'What is your exact revenue model, and how much do you need to sell per month to break even?',
+    'How long until this business generates positive cash flow, and what are your three biggest costs?',
+    'You mentioned a commission fee — what stops users from bypassing your platform to avoid paying?',
+    'What specific numbers can you give me for month 1, month 6, and month 12 revenue projections?',
+  ],
+  market: [
+    'Name one specific person — not a customer type, but an actual individual — who would pay for this today.',
+    'Why would someone switch from their current solution to use your product?',
+    'Walk me through exactly how you will acquire your first 10 paying customers.',
+    'What does your target customer use right now to solve this problem?',
+  ],
+  product: [
+    'What prevents Facebook or Google from adding this feature and crushing you in three months?',
+    'If you have one bad transaction on day one, how do you prevent it from destroying trust in your platform?',
+    'Why is this team uniquely qualified to build this? What have you shipped before?',
+    'What is the one killer feature that will make users come back every single week?',
+  ],
+};
+
+const REACTIONS_GOOD = [
+  'Okay, that is more specific than I expected.',
+  'Fair answer. At least you have thought about it.',
+  'Reasonable. Not proven, but you understand the problem.',
+  'Good. That shows you have done your homework.',
+];
+
+const REACTIONS_BAD = [
+  'That is not an answer. Give me a real number or a real name.',
+  'Every founder says that. Show me why it is true for YOUR startup.',
+  'You dodged the question. Let me ask it differently.',
+  'Too vague. I need specifics, not hopes.',
+];
+
+const STRENGTHS = [
+  'You clearly understand the problem your customers face.',
+  'Your business model is simple and easy to explain.',
+  'You have identified a specific target market.',
+  'You recognize the competitive threat and have a plan.',
+];
+
+const WEAKNESSES = [
+  'You did not explain why customers would trust you over existing solutions.',
+  'The revenue assumptions depend on volume you have not proven exists yet.',
+  'You have no clear answer for how to defend against large competitors.',
+  'You provided no evidence or specific examples to back up your claims.',
+];
+
+// Deterministic selection based on startup name
+const pick = (arr, seed) => arr[Math.abs(seed) % arr.length];
+const hash = (str) => {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h) + str.charCodeAt(i);
+    h = h & h;
+  }
+  return Math.abs(h);
+};
+
+const callMockAI = async (messages, maxTokens, temperature) => {
+  // Simulate API delay (realistic)
+  await new Promise(resolve => setTimeout(resolve, 150 + Math.random() * 100));
+  
+  // Extract context from messages
+  const userMsg = messages.find(m => m.role === 'user')?.content || '';
+  const systemMsg = messages.find(m => m.role === 'system')?.content || '';
+  
+  // Determine which investor is asking
+  let investorKey = 'money';
+  if (systemMsg.includes('Maya Street') || userMsg.includes('customer')) investorKey = 'market';
+  if (systemMsg.includes('Rex Doubt') || userMsg.includes('risk')) investorKey = 'product';
+  
+  // Extract startup name for deterministic responses
+  const nameMatch = userMsg.match(/Name: ([^\n]+)/);
+  const startupName = nameMatch ? nameMatch[1].trim() : 'Startup';
+  const seed = hash(startupName + investorKey);
+  
+  // --- GENERATE INVESTOR QUESTION ---
+  if (userMsg.includes('Ask ONE question') || userMsg.includes('Attack the weakest part')) {
+    return {
+      question: pick(QUESTIONS[investorKey], seed),
+      context: `Tests the ${investorKey} angle for ${startupName}`,
+    };
+  }
+  
+  // --- EVALUATE ANSWER ---
+  if (userMsg.includes('Score this answer') || userMsg.includes('The founder answered:')) {
+    const answerMatch = userMsg.match(/answered: "([^"]+)"/);
+    const answer = answerMatch ? answerMatch[1] : '';
+    
+    // Score based on answer quality
+    const hasNumbers = /\d+/.test(answer);
+    const hasSpecifics = answer.length > 100;
+    const hasBecause = /because|specifically|for example/i.test(answer);
+    
+    let score = 40;
+    if (hasNumbers) score += 15;
+    if (hasSpecifics) score += 15;
+    if (hasBecause) score += 15;
+    score = Math.min(95, score + (seed % 20));
+    
+    const isGood = score >= 60;
+    
+    return {
+      score,
+      reaction: pick(isGood ? REACTIONS_GOOD : REACTIONS_BAD, seed),
+      strength: pick(STRENGTHS, seed),
+      weakness: pick(WEAKNESSES, seed + 1),
+      followUpQuestion: pick(QUESTIONS[investorKey], seed + 2),
+    };
+  }
+  
+  // --- DEAL METER ---
+  if (userMsg.includes('more or less interested')) {
+    const answerMatch = userMsg.match(/answer: "([^"]+)"/);
+    const answer = answerMatch ? answerMatch[1] : '';
+    const isGood = answer.length > 80 && /\d+/.test(answer);
+    return { delta: isGood ? (3 + seed % 5) : -(2 + seed % 4) };
+  }
+  
+  // --- HINT ---
+  if (userMsg.includes('helpful hint') || userMsg.includes('guide the founder')) {
+    const hints = {
+      money: 'Think about a specific number — revenue per transaction and transactions needed per month to break even.',
+      market: 'Think about a real person — not a demographic, but someone you have actually talked to.',
+      product: 'Think about what takes time to build — community, trust, or network effects that big companies cannot copy overnight.',
+    };
+    return { hint: hints[investorKey] };
+  }
+  
+  // --- FINAL VERDICT ---
+  if (userMsg.includes('INVESTOR SESSION TRANSCRIPT') || userMsg.includes('Copy that answer')) {
+    // Extract rounds data
+    const rounds = userMsg.match(/PER-ROUND SCORE: (\d+)\/100/g) || [];
+    const scores = rounds.map(r => parseInt(r.match(/\d+/)[0]));
+    const avgScore = scores.length ? scores.reduce((a,b) => a+b, 0) / scores.length : 50;
+    
+    const money = Math.max(1, Math.min(10, Math.round((avgScore + seed % 20 - 10) / 10)));
+    const customer = Math.max(1, Math.min(10, Math.round((avgScore + seed % 15 - 5) / 10)));
+    const risk = Math.max(1, Math.min(10, Math.round((avgScore + seed % 25 - 15) / 10)));
+    const score = Math.round((money + customer + risk) / 3);
+    const deal = score >= 6 && money >= 6 && customer >= 6 && risk >= 6;
+    
+    // Extract weakest answer
+    const weakestMatch = userMsg.match(/Round \d+[^]+?FOUNDER ANSWER: "([^"]+)"[^]+?PER-ROUND SCORE: (\d+)/g);
+    let weakestAnswer = 'The team explanation lacked specific details.';
+    if (weakestMatch && weakestMatch.length > 0) {
+      let minScore = 100;
+      weakestMatch.forEach(block => {
+        const scoreMatch = block.match(/PER-ROUND SCORE: (\d+)/);
+        const answerMatch = block.match(/FOUNDER ANSWER: "([^"]+)"/);
+        if (scoreMatch && answerMatch) {
+          const s = parseInt(scoreMatch[1]);
+          if (s < minScore) {
+            minScore = s;
+            weakestAnswer = answerMatch[1];
+          }
+        }
+      });
+    }
+    
+    return {
+      score,
+      money,
+      customer,
+      risk,
+      weakest_question: pick(QUESTIONS[investorKey], seed),
+      weakest_answer: weakestAnswer.slice(0, 200),
+      weakness_reason: 'The answer lacked specific numbers, names, or concrete evidence.',
+      better_version: `Instead, provide: (1) A specific metric or number, (2) A named example or customer, (3) Evidence from market research or a pilot test. For example: "We tested this with 15 students at IIT Delhi, and 12 said they would pay ?500/month because current solutions take 3+ days to respond."`,
+      fixes: [
+        `Define the exact unit economics: cost per acquisition, revenue per user, and break-even point for ${startupName}.`,
+        `Identify and commit to onboarding 3 specific early customers by name in the next 30 days.`,
+        `Articulate your one defensible advantage that cannot be copied in under 6 months.`,
+      ],
+      deal,
+      offer: deal ? `Victor Cash offers ?5,00,000 for 15% equity in ${startupName}.` : '',
+    };
+  }
+  
+  // Fallback
+  return { message: 'Mock AI response generated' };
+};
+
+module.exports = { callMockAI };
